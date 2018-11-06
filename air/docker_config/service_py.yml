@@ -1,0 +1,114 @@
+version: '3'
+services:
+# TODO: 使用docker的环境变量替代reids和db的ip
+#  redis:
+#    image: redis:latest
+#     ports:
+#       - 6380:6379
+#    deploy:
+#      replicas: 1
+#      restart_policy:
+#        condition: on-failure
+#
+  scheduler:
+    image: binux/pyspider
+    command: '--taskdb "mysql+taskdb://name:passwd@ip:3306/cn_taskdb" --resultdb "mysql+resultdb://name:passwd@ip:3306/cn_resultdb" --projectdb "mysql+projectdb://name:passwd@ip:3306/cn_projectdb" --message-queue "redis://ip:6380/0" scheduler --inqueue-limit 5000 --delete-time 43200'
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 200M
+
+  phantomjs:
+    image: binux/pyspider:latest
+    depends_on:
+      - scheduler
+      - webui
+    command: phantomjs
+    environment:
+      - 'EXCLUDE_PORTS=5000,23333,24444'
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 200M
+
+#  splash:
+#    image: scrapinghub/splash
+#    environment:
+#      - 'EXCLUDE_PORTS=5023,8051'
+#    deploy:
+#      mode: global
+#      restart_policy:
+#        condition: on-failure
+
+  result:
+    image: binux/pyspider:latest
+    depends_on:
+      - scheduler
+      - webui
+    command: '--taskdb "mysql+taskdb://name:passwd@ip:3306/cn_taskdb"  --projectdb "mysql+projectdb://name:passwd@ip:3306/cn_projectdb" --resultdb "mysql+resultdb://name:passwd@ip:3306/cn_resultdb" --message-queue "redis://ip:6380/0" result_worker'
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 200M
+
+  processor:
+    image: binux/pyspider:latest
+    depends_on:
+      - scheduler
+    command: '--projectdb "mysql+projectdb://name:passwd@ip:3306/cn_projectdb" --message-queue "redis://ip:6380/0" processor'
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 200M
+
+  fetcher:
+    image: binux/pyspider:latest
+    depends_on:
+      - scheduler
+    command: '--message-queue "redis://ip:6380/0" --phantomjs-proxy "phantomjs:25555" fetcher --xmlrpc'
+    deploy:
+#      mode: global
+      replicas: 4
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 200M
+
+  webui:
+    image: binux/pyspider:latest
+    depends_on:
+      - fetcher
+    command: '--taskdb "mysql+taskdb://name:passwd@ip:3306/cn_taskdb"  --projectdb "mysql+projectdb://name:passwd@ip:3306/cn_projectdb" --resultdb "mysql+resultdb://name:passwd@ip:3306/cn_resultdb" --message-queue "redis://ip:6380/0" webui --max-rate 10 --max-burst 3 --need-auth --username name --password passwd --scheduler-rpc "http://scheduler:23333/" --fetcher-rpc "http://fetcher:24444"'
+    ports:
+      - 5000:5000
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 150M
+
+networks:
+  default:
+    external:
+      name: pyspider_customer_default
